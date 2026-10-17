@@ -19,7 +19,7 @@ The MCP Server and its extension leverage the Model Context Protocol (MCP) frame
 ## **Mandatory** Pre-requisite
 
 - Install uv/uvx: [https://github.com/astral-sh/uv](https://github.com/astral-sh/uv)
-- Install mcp[cli] to base env: [uv pip install "mcp[cli]"](https://pypi.org/project/mcp/)
+- Optional, only for running the MCP inspector (`mcp dev`): install [mcp[cli]](https://pypi.org/project/mcp/) 1.x into a venv with `uv pip install "mcp[cli]<2"`
 
 ## Installation
 
@@ -51,9 +51,8 @@ cd ~/isaacsim   # your Isaac Sim install directory
 Verify the extension starts successfully. The output should look like:
 
 ```
-[7.160s] [ext: isaac.sim.mcp_extension-0.1.0] startup
-trigger  on_startup for:  isaac.sim.mcp_extension-0.1.0
-settings:  {'envPath': '/home/ubuntu/.local/share/ov/data/Kit/Isaac-Sim/4.2/pip3-envs/default', 'archiveDirs': {}, 'installCheckIgnoreVersion': False, 'allowOnlineIndex': True, 'tryUpgradePipOnFirstUse': False}
+[3.681s] [ext: isaac.sim.mcp_extension-0.3.0] startup
+trigger  on_startup for:  isaac.sim.mcp_extension-0.3.0
 Server thread startedIsaac Sim MCP server started on localhost:8766
 ```
 
@@ -86,10 +85,9 @@ Start Isaac Sim with the extension first, then ask Claude to "check the Isaac Si
 
 #### Cursor
 
-1. Go to terminal and run, make sure mcp server could start sucessfully at terminal with base venv.
+1. Make sure the MCP server starts from a terminal (it then waits silently for a client on stdin; press Ctrl+C to exit):
    ```
-   uv pip install "mcp[cli]"
-   uv run /home/ubuntu/Documents/isaac-sim-mcp/isaac_mcp/server.py
+   uv run --script ~/Documents/isaac-sim-mcp/isaac_mcp/server.py
    ```
 2. Start Cursor and open the folder `~/Documents/isaac-sim-mcp`
 3. Go to Cursor preferences, choose MCP and add a global MCP server:
@@ -98,7 +96,8 @@ Start Isaac Sim with the extension first, then ask Claude to "check the Isaac Si
 {
     "mcpServers": {
         "isaac-sim": {
-            "command": "uv run /home/ubuntu/Documents/isaac-sim-mcp/isaac_mcp/server.py"
+            "command": "uv",
+            "args": ["run", "--script", "/home/<you>/Documents/isaac-sim-mcp/isaac_mcp/server.py"]
         }
     }
 }
@@ -109,7 +108,7 @@ Start Isaac Sim with the extension first, then ask Claude to "check the Isaac Si
 To develop the MCP Server, start the MCP inspector:
 
 ```bash
-uv run mcp dev ~/Documents/isaac-sim-mcp/isaac_mcp/server.py
+uv run --with "mcp[cli]<2" mcp dev ~/Documents/isaac-sim-mcp/isaac_mcp/server.py
 ```
 
 You can visit the debug page through http://localhost:5173
