@@ -22,6 +22,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["mcp[cli]>=1.6,<2"]
+# ///
 # isaac_sim_mcp_server.py
 import time
 from mcp.server.fastmcp import FastMCP, Context, Image
@@ -219,7 +223,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 # Create the MCP server with lifespan support
 mcp = FastMCP(
     "IsaacSimMCP",
-    description="Isaac Sim integration through the Model Context Protocol",
+    instructions="Isaac Sim integration through the Model Context Protocol",
     lifespan=server_lifespan
 )
 
@@ -265,7 +269,7 @@ def get_scene_info(ctx: Context) -> str:
     try:
         isaac = get_isaac_connection()
         result = isaac.send_command("get_scene_info")
-        print("result: ", result)
+        logger.info(f"result: {result}")
         
         # Just return the JSON representation of what Isaac sent us
         return json.dumps(result, indent=2)
@@ -274,7 +278,7 @@ def get_scene_info(ctx: Context) -> str:
     except Exception as e:
         logger.error(f"Error getting scene info from Isaac: {str(e)}")
         # return f"Error getting scene info: {str(e)}"
-        return {"status": "error", "error": str(e), "message": "Error getting scene info"}
+        return f"Error getting scene info: {str(e)}"
 
 # @mcp.tool()
 # def get_object_info(ctx: Context, object_name: str) -> str:
@@ -298,24 +302,25 @@ def get_scene_info(ctx: Context) -> str:
 def create_physics_scene(
     objects: List[Dict[str, Any]] = [],
     floor: bool = True,
-    gravity: List[float] = [0,  -0.981, 0],
+    gravity: List[float] = [0, 0, -9.81],
     scene_name: str = "physics_scene"
-) -> Dict[str, Any]:
-    """Create a physics scene with multiple objects. Before create physics scene, you need to call get_scene_info() first to verify availability of connection.
-    
+) -> str:
+    """Create a physics scene (gravity + optional ground plane) and optionally add primitive objects with rigid-body physics.
+    Call get_scene_info() first to verify the connection. The stage is Z-up and in meters. Existing paths are skipped.
+
     Args:
-        objects: List of objects to create. Each object should have at least 'type' and 'position'. 
-        objects  = [
-        {"path": "/World/Cube", "type": "Cube", "size": 20, "position": [0, 100, 0]},
-        {"path": "/World/Sphere", "type": "Sphere", "radius": 5, "position": [5, 200, 0]},
-        {"path": "/World/Cone", "type": "Cone", "height": 8, "radius": 3, "position": [-5, 150, 0]}
-         ]
-        floor: Whether to create a floor. deafult is True
-        gravity: The gravity vector. Default is [0, 0, -981.0] (cm/s^2).
-        scene_name: The name of the scene. deafult is "physics_scene"
-        
+        objects: List of objects to create. Supported types: Cube, Sphere, Cylinder, Cone, Capsule. Keys per object:
+            type, path (or name), position [x, y, z], rotation (quaternion [w, x, y, z]), scale [x, y, z],
+            size (Cube edge length), radius, height, color [r, g, b, (a)] in 0-1,
+            physics_enabled (default True), mass (kg, default 1.0), is_kinematic (default False). Example:
+            [{"path": "/World/Cube", "type": "Cube", "size": 0.5, "position": [0, 0, 2], "color": [1, 0, 0]},
+             {"path": "/World/Ball", "type": "Sphere", "radius": 0.2, "position": [1, 0, 3]}]
+        floor: Whether to create a ground plane. Default True.
+        gravity: Gravity vector in m/s^2. Default [0, 0, -9.81].
+        scene_name: Name of the scene.
+
     Returns:
-        Dictionary with result information.
+        String with result information.
     """
     params = {"objects": objects, "floor": floor}
     
@@ -331,8 +336,7 @@ def create_physics_scene(
         return f"create_physics_scene successfully: {result.get('result', '')}, {result.get('message', '')}"
     except Exception as e:
         logger.error(f"Error create_physics_scene: {str(e)}")
-        # return f"Error create_physics_scene: {str(e)}"
-        return {"status": "error", "error": str(e), "message": "Error create_physics_scene"}
+        return f"Error create_physics_scene: {str(e)}"
     
 @mcp.tool("create_robot")
 def create_robot(robot_type: str = "g1", position: List[float] = [0, 0, 0]) -> str:
@@ -340,11 +344,14 @@ def create_robot(robot_type: str = "g1", position: List[float] = [0, 0, 0]) -> s
     
     Args:
         robot_type: The type of robot to create. Available options:
-            - "franka": Franka Emika Panda robot
-            - "jetbot": NVIDIA JetBot robot
-            - "carter": Carter delivery robot
-            - "g1": Unitree G1 quadruped robot (default)
-            - "go1": Unitree Go1 quadruped robot
+            - "franka": Franka Emika Panda arm
+            - "jetbot": NVIDIA JetBot
+            - "carter": NVIDIA Nova Carter
+            - "g1": Unitree G1 humanoid (default)
+            - "go1": Unitree Go1 quadruped
+            - "go2": Unitree Go2 quadruped
+            - "h1": Unitree H1 humanoid
+        position: World position [x, y, z] in meters. Repeated calls create /Franka, /Franka_01, ... instead of overwriting.
         
     Returns:
         String with result information.
@@ -376,81 +383,77 @@ def omni_kit_command(command: str = "CreatePrim", prim_type: str = "Sphere") -> 
     except Exception as e:
         logger.error(f"Error executing Omni Kit command: {str(e)}")
         # return f"Error executing Omni Kit command: {str(e)}"
-        return {"status": "error", "error": str(e), "message": "Error executing Omni Kit command"}
+        return f"Error executing Omni Kit command: {str(e)}"
 
 
 @mcp.tool()
 def execute_script(ctx: Context, code: str) -> str:
     """
-    Before execute script pls check prompt from asset_creation_strategy() to ensure the scene is properly initialized.
-    Execute arbitrary Python code in Isaac Sim. Before executing any code, first verify if get_scene_info() has been called to ensure the scene is properly initialized. Always print the formatted code into chat to confirm before execution to confirm its correctness. 
-    Before execute script pls check if create_physics_scene() has been called to ensure the physics scene is properly initialized.
-    When working with robots, always try using the create_robot() function first before resorting to execute_script(). The create_robot() function provides a simpler, more reliable way to add robots to your scene with proper initialization and positioning. Only use execute_script() for robot creation when you need custom configurations or behaviors not supported by create_robot().
-    
-    For physics simulation, avoid using simulation_context to run simulations in the main thread as this can cause blocking. Instead, use the World class with async methods for initializing physics and running simulations. For example, use my_world = World(physics_dt=1.0/60.0) and my_world.step_async() in a loop, which allows for better performance and responsiveness. If you need to wait for physics to stabilize, consider using my_world.play() followed by multiple step_async() calls.
-    To create an simulation of Franka robot, the code should be like this:
-from omni.isaac.core import SimulationContext
-from omni.isaac.core.utils.prims import create_prim
-from omni.isaac.core.utils.stage import add_reference_to_stage, is_stage_loading
-from omni.isaac.nucleus import get_assets_root_path
+    Execute arbitrary Python code inside the running Isaac Sim (5.x/6.x) GUI on its main thread.
+    Call get_scene_info() first to verify the connection. Prefer create_robot() / create_physics_scene() for simple tasks.
 
-assets_root_path = get_assets_root_path()
-asset_path = assets_root_path + "/Isaac/Robots/Franka/franka_alt_fingers.usd"
-simulation_context = SimulationContext()
-add_reference_to_stage(asset_path, "/Franka")
-#create_prim("/DistantLight", "DistantLight")
+    Return values: anything the script print()s is returned as "stdout", and if the script assigns a
+    variable named `result` (JSON-serializable) it is returned as "result". Use this to inspect the stage.
+    Pre-imported names: omni, carb, Usd, UsdGeom, Sdf, Gf.
 
+    Use the Isaac Sim 5.x/6.x module names (the old omni.isaac.* modules no longer exist):
+      isaacsim.core.api (World, SimulationContext, PhysicsContext), isaacsim.core.api.objects (DynamicCuboid, ...),
+      isaacsim.core.api.robots (Robot), isaacsim.core.prims (SingleArticulation, SingleXFormPrim, SingleRigidPrim),
+      isaacsim.core.utils.stage / .prims / .types (add_reference_to_stage, create_prim, ArticulationAction),
+      isaacsim.storage.native (get_assets_root_path), isaacsim.robot.wheeled_robots (WheeledRobot, DifferentialController).
+    Robot assets (append to get_assets_root_path()):
+      /Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd, /Isaac/Robots/NVIDIA/Jetbot/jetbot.usd,
+      /Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd, /Isaac/Robots/Unitree/G1/g1.usd, /Isaac/Robots/Unitree/Go1/go1.usd,
+      /Isaac/Robots/Unitree/Go2/go2.usd, /Isaac/Robots/Unitree/H1/h1.usd
 
+    IMPORTANT: the script runs on the GUI main thread. Never write blocking loops such as
+    `for i in range(1000): simulation_context.step(render=True)` - they freeze Isaac Sim and time out.
+    Instead do setup in an async function scheduled with asyncio.ensure_future(), and drive robots
+    from a physics callback while the timeline plays. Example (Franka joint control):
 
+import asyncio
+import numpy as np
+from isaacsim.core.api import World
+from isaacsim.core.prims import SingleArticulation
+from isaacsim.core.utils.stage import add_reference_to_stage
+from isaacsim.storage.native import get_assets_root_path
 
-    To control the Franka robot, the code should be like this:
+async def setup():
+    world = World.instance() or World(stage_units_in_meters=1.0)
+    await world.initialize_simulation_context_async()
+    world.scene.add_default_ground_plane()
+    add_reference_to_stage(get_assets_root_path() + "/Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd", "/World/Franka")
+    franka = world.scene.add(SingleArticulation(prim_path="/World/Franka", name="franka"))
+    await world.reset_async()
+    idx = franka.get_dof_index("panda_joint2")
 
-from omni.isaac.core import SimulationContext
-from omni.isaac.core.articulations import Articulation
-from omni.isaac.core.utils.stage import add_reference_to_stage
-from omni.isaac.nucleus import get_assets_root_path
+    def on_physics_step(step_size):
+        franka.set_joint_positions(np.array([-1.5]), joint_indices=np.array([idx]))
 
-my_world = World(stage_units_in_meters=1.0)
+    world.add_physics_callback("franka_control", on_physics_step)
+    await world.play_async()
 
-assets_root_path = get_assets_root_path()
-asset_path = assets_root_path + "/Isaac/Robots/Franka/franka_alt_fingers.usd"
+asyncio.ensure_future(setup())
 
-simulation_context = SimulationContext()
-add_reference_to_stage(asset_path, "/Franka")
+    To stop: `import omni.timeline; omni.timeline.get_timeline_interface().stop()`.
+    To remove a callback: `World.instance().remove_physics_callback("franka_control")`.
 
-# need to initialize physics getting any articulation..etc
-simulation_context.initialize_physics()
-art = Articulation("/Franka")
-art.initialize(my_world.physics_sim_view)
-dof_ptr = art.get_dof_index("panda_joint2")
-
-simulation_context.play()
-# NOTE: before interacting with dc directly you need to step physics for one step at least
-# simulation_context.step(render=True) which happens inside .play()
-for i in range(1000):
-    art.set_joint_positions([-1.5], [dof_ptr])
-    simulation_context.step(render=True)
-
-simulation_context.stop()
-
-
-    
     Parameters:
     - code: The Python code to execute, e.g. "omni.kit.commands.execute("CreatePrim", prim_type="Sphere")"
     """
     try:
         # Get the global connection
         isaac = get_isaac_connection()
-        print("code: ", code)
-        
+        logger.info(f"code: {code}")
+
         result = isaac.send_command("execute_script", {"code": code})
-        print("result: ", result)
-        return result
+        logger.info(f"result: {result}")
+        return json.dumps(result, indent=2)
         # return f"Code executed successfully: {result.get('result', '')}"
     except Exception as e:
         logger.error(f"Error executing code: {str(e)}")
         # return f"Error executing code: {str(e)}"
-        return {"status": "error", "error": str(e), "message": "Error executing code"}
+        return f"Error executing code: {str(e)}"
                 
 @mcp.prompt()
 def asset_creation_strategy() -> str:
@@ -460,154 +463,13 @@ def asset_creation_strategy() -> str:
     1. If the scene is empty, create a physics scene with create_physics_scene()
     2. if execute script due to communication error, then retry 3 times at most
 
-    3. For Franka robot simulation, the code should be like this:
-from omni.isaac.core import SimulationContext
-from omni.isaac.core.utils.prims import create_prim
-from omni.isaac.core.utils.stage import add_reference_to_stage, is_stage_loading
-from omni.isaac.nucleus import get_assets_root_path
-
-assets_root_path = get_assets_root_path()
-asset_path = assets_root_path + "/Isaac/Robots/Franka/franka_alt_fingers.usd"
-add_reference_to_stage(asset_path, "/Franka")
-#create_prim("/DistantLight", "DistantLight")
-
-
-# need to initialize physics getting any articulation..etc
-simulation_context = SimulationContext()
-simulation_context.initialize_physics()
-simulation_context.play()
-
-for i in range(1000):
-    simulation_context.step(render=True)
-
-simulation_context.stop()
-
-    4. For Franka robot control, the code should be like this:
-    
-from omni.isaac.core import SimulationContext
-from omni.isaac.core.utils.prims import create_prim
-from omni.isaac.core.utils.stage import add_reference_to_stage, is_stage_loading
-from omni.isaac.nucleus import get_assets_root_path
-from pxr import UsdPhysics
-
-def create_physics_scene(stage, scene_path="/World/PhysicsScene"):
-    if not stage.GetPrimAtPath(scene_path):
-        UsdPhysics.Scene.Define(stage, scene_path)
-    
-    return stage.GetPrimAtPath(scene_path)
-
-stage = omni.usd.get_context().get_stage()
-physics_scene = create_physics_scene(stage)
-if not physics_scene:
-    raise RuntimeError("Failed to create or find physics scene")
-import omni.physics.tensors as physx
-
-def create_simulation_view(stage):
-    sim_view = physx.create_simulation_view(stage)
-    if not sim_view:
-        carb.log_error("Failed to create simulation view")
-        return None
-    
-    return sim_view
-
-sim_view = create_simulation_view(stage)
-if not sim_view:
-    raise RuntimeError("Failed to create simulation view")
-
-simulation_context = SimulationContext()
-assets_root_path = get_assets_root_path()
-asset_path = assets_root_path + "/Isaac/Robots/Franka/franka_alt_fingers.usd"
-add_reference_to_stage(asset_path, "/Franka")
-#create_prim("/DistantLight", "DistantLight")
-
-# need to initialize physics getting any articulation..etc
-simulation_context.initialize_physics()
-art = Articulation("/Franka")
-art.initialize()
-dof_ptr = art.get_dof_index("panda_joint2")
-
-simulation_context.play()
-# NOTE: before interacting with dc directly you need to step physics for one step at least
-# simulation_context.step(render=True) which happens inside .play()
-for i in range(1000):
-    art.set_joint_positions([-1.5], [dof_ptr])
-    simulation_context.step(render=True)
-
-simulation_context.stop()
-
-    5. For Jetbot simulation, the code should be like this:
-import carb
-import numpy as np
-from omni.isaac.core import World
-from omni.isaac.core import SimulationContext
-from omni.isaac.core.utils.prims import create_prim
-from omni.isaac.nucleus import get_assets_root_path
-from omni.isaac.wheeled_robots.controllers.differential_controller import DifferentialController
-from omni.isaac.wheeled_robots.robots import WheeledRobot
-
-simulation_context = SimulationContext()
-simulation_context.initialize_physics()
-
-my_world = World(stage_units_in_meters=1.0)
-
-assets_root_path = get_assets_root_path()
-if assets_root_path is None:
-    carb.log_error("Could not find Isaac Sim assets folder")
-jetbot_asset_path = assets_root_path + "/Isaac/Robots/Jetbot/jetbot.usd"
-my_jetbot = my_world.scene.add(
-    WheeledRobot(
-        prim_path="/World/Jetbot",
-        name="my_jetbot",
-        wheel_dof_names=["left_wheel_joint", "right_wheel_joint"],
-        create_robot=True,
-        usd_path=jetbot_asset_path,
-        position=np.array([0, 0.0, 2.0]),
-    )
-)
-
-
-create_prim("/DistantLight", "DistantLight")
-# need to initialize physics getting any articulation..etc
-
-
-my_world.scene.add_default_ground_plane()
-my_controller = DifferentialController(name="simple_control", wheel_radius=0.03, wheel_base=0.1125)
-my_world.reset()
-
-simulation_context.play()
-for i in range(10):
-    simulation_context.step(render=True) 
-
-i = 0
-reset_needed = False
-while i < 2000:
-    my_world.step(render=True)
-    if my_world.is_stopped() and not reset_needed:
-        reset_needed = True
-    if my_world.is_playing():
-        if reset_needed:
-            my_world.reset()
-            my_controller.reset()
-            reset_needed = False
-        if i >= 0 and i < 1000:
-            # forward
-            my_jetbot.apply_wheel_actions(my_controller.forward(command=[0.05, 0]))
-            print(my_jetbot.get_linear_velocity())
-        elif i >= 1000 and i < 1300:
-            # rotate
-            my_jetbot.apply_wheel_actions(my_controller.forward(command=[0.0, np.pi / 12]))
-            print(my_jetbot.get_angular_velocity())
-        elif i >= 1300 and i < 2000:
-            # forward
-            my_jetbot.apply_wheel_actions(my_controller.forward(command=[0.05, 0]))
-        elif i == 2000:
-            i = 0
-        i += 1
-simulation_context.stop()
-
-6. For G1 simulation, the code should be like this see g1_ok.py
-
-
+    3. Add robots with create_robot() where possible (franka, jetbot, carter, g1, go1, go2, h1).
+    4. For anything custom use execute_script() with Isaac Sim 5.x/6.x modules (isaacsim.core.api, isaacsim.core.prims,
+       isaacsim.core.utils, isaacsim.storage.native, isaacsim.robot.wheeled_robots) - never omni.isaac.*.
+    5. Never block the main thread with step() loops. Do setup in an async function scheduled with
+       asyncio.ensure_future(), and drive robots from world.add_physics_callback(...) while the timeline plays
+       (see the execute_script() description for a full example).
+    6. Reference examples for longer simulations live in isaac.sim.mcp_extension/examples (franka.py, franka_grid.py, g1.py, go1.py).
     """
 
 

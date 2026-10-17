@@ -24,15 +24,15 @@ SOFTWARE.
 
 import asyncio
 import numpy as np
-from omni.isaac.core import World, SimulationContext
-from omni.isaac.core.utils.stage import add_reference_to_stage
-from omni.isaac.core.prims import XFormPrim
-from omni.isaac.core.articulations import Articulation
-from omni.isaac.nucleus import get_assets_root_path
+from isaacsim.core.api import World, SimulationContext
+from isaacsim.core.utils.stage import add_reference_to_stage
+from isaacsim.core.prims import SingleXFormPrim as XFormPrim
+from isaacsim.core.prims import SingleArticulation as Articulation
+from isaacsim.storage.native import get_assets_root_path
 
 # Get the path to the Franka robot asset
 assets_root_path = get_assets_root_path()
-asset_path = assets_root_path + "/Isaac/Robots/Franka/franka_alt_fingers.usd"
+asset_path = assets_root_path + "/Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd"
 
 # Create a 3x3 grid of Franka robots
 # The grid will span from [-3, -3, 0] to [3, 3, 0]

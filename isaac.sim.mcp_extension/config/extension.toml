@@ -7,9 +7,15 @@ category = "Robotics"
 keywords = ["mcp", "server", "socket", "simulation", "robotics"]
 
 [dependencies]
-"omni.isaac.core" = {}
+# Isaac Sim 5.x/6.x replaced the omni.isaac.* extensions with isaacsim.*
+"isaacsim.core.api" = {}
+"isaacsim.core.prims" = {}
+"isaacsim.core.utils" = {}
+"isaacsim.storage.native" = {}
+"isaacsim.robot.wheeled_robots" = {}
 "omni.kit.uiapp" = {}
-"omni.isaac.ui" = {}
+"omni.kit.pip_archive" = {}
+"omni.physx" = {}
 
 
 
@@ -23,5 +29,5 @@ name = "isaac_sim_mcp_extension"
 
 
 [settings]
-server.socket = 8766
-server.host = "localhost"
+exts."isaac.sim.mcp_extension".server.port = 8766
+exts."isaac.sim.mcp_extension".server.host = "localhost"

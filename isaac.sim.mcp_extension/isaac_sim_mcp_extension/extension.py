@@ -43,10 +43,11 @@ import omni.kit.commands
 import omni.physx as _physx
 import omni.timeline
 from typing import Dict, Any, List, Optional, Union
-from omni.isaac.nucleus import get_assets_root_path
-from omni.isaac.core.prims import XFormPrim
+import omni.ext
+from isaacsim.storage.native import get_assets_root_path
+from isaacsim.core.prims import SingleXFormPrim as XFormPrim
 import numpy as np
-from omni.isaac.core import World
+from isaacsim.core.api import World
 # Import Beaver3d and USDLoader
 from isaac_sim_mcp_extension.gen3d import Beaver3d
 from isaac_sim_mcp_extension.usd import USDLoader
@@ -83,8 +84,8 @@ class MCPExtension(omni.ext.IExt):
         """Initialize extension and UI elements"""
         print("trigger  on_startup for: ", ext_id)
         print("settings: ", self._settings.get("/exts/omni.kit.pipapi"))
-        self.port = self._settings.get("/exts/isaac.sim.mcp/server, port") or 8766
-        self.host = self._settings.get("/exts/isaac.sim.mcp/server.host") or "localhost"
+        self.port = self._settings.get("/exts/isaac.sim.mcp_extension/server/port") or 8766
+        self.host = self._settings.get("/exts/isaac.sim.mcp_extension/server/host") or "localhost"
         if not hasattr(self, 'running'):
             self.running = False
 
@@ -127,7 +128,7 @@ class MCPExtension(omni.ext.IExt):
             print(f"Isaac Sim MCP server started on {self.host}:{self.port}")
         except Exception as e:
             print(f"Failed to start server: {str(e)}")
-            self.stop()
+            self._stop()
             
     def _stop(self):
         self.running = False
@@ -346,19 +347,26 @@ class MCPExtension(omni.ext.IExt):
             local_ns["Sdf"] = Sdf
             local_ns["Gf"] = Gf
             # code = script["code"]
-            
-            # Execute the script
-            exec(code,  local_ns)
-            
-            # Get the result if any
-            # result = local_ns.get("result", None)
-            result = None
-            
-            
+
+            # Execute the script, capturing anything it prints so the caller can see it
+            import io
+            import contextlib
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exec(code,  local_ns)
+
+            # Scripts may assign a `result` variable to return data to the caller
+            result = local_ns.get("result", None)
+            try:
+                json.dumps(result)
+            except (TypeError, ValueError):
+                result = repr(result)
+
             return {
                 "status": "success",
                 "message": "Script executed successfully",
-                "result": result
+                "result": result,
+                "stdout": stdout.getvalue()[-20000:],
             }
         except Exception as e:
             carb.log_error(f"Error executing script: {e}")
@@ -375,7 +383,8 @@ class MCPExtension(omni.ext.IExt):
         assert self._stage is not None
         stage_path = self._stage.GetRootLayer().realPath
         assets_root_path = get_assets_root_path()
-        return {"status": "success", "message": "pong", "assets_root_path": assets_root_path}
+        prims = [str(p.GetPath()) for p in self._stage.GetPseudoRoot().GetChildren()]
+        return {"status": "success", "message": "pong", "assets_root_path": assets_root_path, "root_prims": prims}
         
     def omini_kit_command(self,  command: str, prim_type: str) -> Dict[str, Any]:
         omni.kit.commands.execute(command, prim_type=prim_type)
@@ -383,236 +392,120 @@ class MCPExtension(omni.ext.IExt):
         return {"status": "success", "message": "command executed"}
     
     def create_robot(self, robot_type: str = "g1", position: List[float] = [0, 0, 0]):
-        from omni.isaac.core.utils.prims import create_prim
-        from omni.isaac.core.utils.stage import add_reference_to_stage, is_stage_loading
-        from omni.isaac.nucleus import get_assets_root_path
-        
+        from isaacsim.core.utils.stage import add_reference_to_stage
+        from isaacsim.core.utils.prims import is_prim_path_valid
+        from isaacsim.core.utils.string import find_unique_string_name
 
-        stage = omni.usd.get_context().get_stage()
         assets_root_path = get_assets_root_path()
+        if assets_root_path is None:
+            return {"status": "error", "message": "Could not resolve Isaac Sim assets root path"}
         print("position: ", position)
-        
-        if robot_type.lower() == "franka":
-            asset_path = assets_root_path + "/Isaac/Robots/Franka/franka_alt_fingers.usd"
-            add_reference_to_stage(asset_path, "/Franka")
-            robot_prim = XFormPrim(prim_path="/Franka")
-            robot_prim.set_world_pose(position=np.array(position))
-            return {"status": "success", "message": f"{robot_type} robot created"}
-        elif robot_type.lower() == "jetbot":
-            asset_path = assets_root_path + "/Isaac/Robots/Jetbot/jetbot.usd"
-            add_reference_to_stage(asset_path, "/Jetbot")
-            robot_prim = XFormPrim(prim_path="/Jetbot")
-            robot_prim.set_world_pose(position=np.array(position))
-            return {"status": "success", "message": f"{robot_type} robot created"}
-        elif robot_type.lower() == "carter":
-            asset_path = assets_root_path + "/Isaac/Robots/Carter/carter.usd"
-            add_reference_to_stage(asset_path, "/Carter")
-            robot_prim = XFormPrim(prim_path="/Carter")
-            robot_prim.set_world_pose(position=np.array(position))
-            return {"status": "success", "message": f"{robot_type} robot created"}
-        elif robot_type.lower() == "g1":
-            asset_path = assets_root_path + "/Isaac/Robots/Unitree/G1/g1.usd"
-            add_reference_to_stage(asset_path, "/G1")
-            robot_prim = XFormPrim(prim_path="/G1")
-            robot_prim.set_world_pose(position=np.array(position))
-            return {"status": "success", "message": f"{robot_type} robot created"}
-        elif robot_type.lower() == "go1":
-            asset_path = assets_root_path + "/Isaac/Robots/Unitree/Go1/go1.usd"
-            add_reference_to_stage(asset_path, "/Go1")
-            robot_prim = XFormPrim(prim_path="/Go1")
-            robot_prim.set_world_pose(position=np.array(position))
-            return {"status": "success", "message": f"{robot_type} robot created"}
-        else:
-            # Default to Franka if unknown robot type
-            asset_path = assets_root_path + "/Isaac/Robots/Franka/franka_alt_fingers.usd"
-            add_reference_to_stage(asset_path, "/Franka")
-            robot_prim = XFormPrim(prim_path="/Franka")
-            robot_prim.set_world_pose(position=np.array(position))
-            return {"status": "success", "message": f"{robot_type} robot created"}
+
+        # Asset layout for Isaac Sim 5.x/6.x
+        robots = {
+            "franka": ("/Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd", "/Franka"),
+            "jetbot": ("/Isaac/Robots/NVIDIA/Jetbot/jetbot.usd", "/Jetbot"),
+            "carter": ("/Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd", "/Carter"),
+            "g1": ("/Isaac/Robots/Unitree/G1/g1.usd", "/G1"),
+            "go1": ("/Isaac/Robots/Unitree/Go1/go1.usd", "/Go1"),
+            "go2": ("/Isaac/Robots/Unitree/Go2/go2.usd", "/Go2"),
+            "h1": ("/Isaac/Robots/Unitree/H1/h1.usd", "/H1"),
+        }
+        # Default to Franka if unknown robot type
+        asset_rel_path, base_prim_path = robots.get(robot_type.lower(), robots["franka"])
+        # Pick a free prim path so repeated calls add another robot instead of overwriting
+        prim_path = find_unique_string_name(base_prim_path, lambda p: not is_prim_path_valid(p))
+        add_reference_to_stage(assets_root_path + asset_rel_path, prim_path)
+        robot_prim = XFormPrim(prim_path=prim_path)
+        robot_prim.set_world_pose(position=np.array(position))
+        return {"status": "success", "message": f"{robot_type} robot created at {prim_path}", "prim_path": prim_path}
     
     def create_physics_scene(
             self,
             objects: List[Dict[str, Any]] = [],
             floor: bool = True,
-            gravity: List[float] = (0.0, -9.81, 0.0),
+            gravity: List[float] = (0.0, 0.0, -9.81),
             scene_name: str = "None"
         ) -> Dict[str, Any]:
-            """Create a physics scene with multiple objects."""
+            """Create a physics scene with multiple objects (stage is Z-up, meters)."""
+            from pxr import UsdPhysics
             try:
-                # Set default values
-                gravity = gravity or [0, -9.81, 0]
+                gravity = gravity or [0.0, 0.0, -9.81]
                 scene_name = scene_name or "physics_scene"
-                
-                
-                # Create a new stage
-                #omni.kit.commands.execute("CreateNewStage")
-                
-                
                 stage = omni.usd.get_context().get_stage()
-                print("stage: ", stage)
-                
-                # print("start to create new sphere")
-                # # import omni.kit.commands
-                # omni.kit.commands.execute("CreatePrim", prim_type="Sphere")
-                # print("create sphere successfully")
-                
-                # Set up the physics scene
+
+                if not stage.GetPrimAtPath("/World"):
+                    UsdGeom.Xform.Define(stage, "/World")
+
+                # Physics scene with gravity
                 scene_path = "/World/PhysicsScene"
-                omni.kit.commands.execute(
-                    "CreatePrim",
-                    prim_path=scene_path,
-                    prim_type="PhysicsScene",
-                    
-                )
-                #attributes={"physxScene:enabled": True , "physxScene:gravity": gravity},
-                
+                scene = UsdPhysics.Scene.Get(stage, scene_path) or UsdPhysics.Scene.Define(stage, scene_path)
+                g = Gf.Vec3f(*gravity)
+                magnitude = g.GetLength()
+                if magnitude > 0:
+                    scene.CreateGravityDirectionAttr().Set(g / magnitude)
+                    scene.CreateGravityMagnitudeAttr().Set(magnitude)
 
-                # Initialize simulation context with physics
-                # simulation_context = SimulationContext()
-                # my_world = World(physics_dt=1.0 / 60.0, rendering_dt=1.0 / 60.0, stage_units_in_meters=1.0)
-        
-                # # Make sure the world is playing before initializing the robot
-                # if not my_world.is_playing():
-                #     my_world.play()
-                #     # Wait a few frames for physics to stabilize
-                # for _ in range(1000):
-                #     my_world.step_async()
-                # my_world.initialize_physics()
+                # Ground plane with collision
+                if floor and not stage.GetPrimAtPath("/World/groundPlane"):
+                    from isaacsim.core.api.objects import GroundPlane
+                    GroundPlane(prim_path="/World/groundPlane", size=100.0)
 
-                # print("created physics scene: ", scene_path)
-                
-                # Create the World prim as a Xform
-                world_path = "/World"
-                omni.kit.commands.execute(
-                    "CreatePrim",
-                    prim_path=world_path,
-                    prim_type="Xform",
-                )
-                print("create world: ", world_path)
-                # Create a ground plane if requested
-                if floor:
-                    floor_path = "/World/ground"
-                    omni.kit.commands.execute(
-                        "CreatePrim",
-                        prim_path=floor_path,
-                        prim_type="Plane",
-                        attributes={"size": 100.0}  # Large ground plane
-                    )
-                    
-                    # Add physics properties to the ground
-                    # omni.kit.commands.execute(
-                    #     "CreatePhysics",
-                    #     prim_path=floor_path,
-                    #     physics_type="collider",
-                    #     attributes={
-                    #         "static": True,
-                    #         "collision_enabled": True
-                    #     }
-                    # )
-                # objects = [
-                # {"path": "/World/Cube", "type": "Cube", "size": 20, "position": (0, 100, 0), "rotation": [1, 2, 3, 0], "scale": [1, 1, 1], "color": [0.5, 0.5, 0.5, 1.0], "physics_enabled": True, "mass": 1.0, "is_kinematic": False},
-                # {"path": "/World/Sphere", "type": "Sphere", "radius": 5, "position": (5, 200, 0)},
-                # {"path": "/World/Cone", "type": "Cone", "height": 8, "radius": 3, "position": (-5, 150, 0)}
-                # ]
-                print("start create objects: ", objects)
-                objects_created = 0
-                # Create each object
-                for i, obj in enumerate(objects):
-                    obj_name = obj.get("name", f"object_{i}")
-                    obj_type = obj.get("type", "Cube")
-                    obj_position = obj.get("position", [0, 0, 0])
-                    obj_rotation = obj.get("rotation", [1, 0, 0, 0])  # Default is no rotation (identity quaternion)
-                    obj_scale = obj.get("scale", [1, 1, 1])
-                    obj_color = obj.get("color", [0.5, 0.5, 0.5, 1.0])
-                    obj_physics = obj.get("physics_enabled", True)
-                    obj_mass = obj.get("mass", 1.0)
-                    obj_kinematic = obj.get("is_kinematic", False)
-                    
-                    # Create the object
-                    obj_path = obj.get("path", f"/World/{obj_name}")
-                    print("obj_path: ", obj_path)
-                    if stage.GetPrimAtPath(obj_path):
-                        print("obj_path already exists and skip creating")
-                        continue
-                    
-                    # Create the primitive based on type
-                    if obj_type in ["Cube", "Sphere", "Cylinder", "Cone", "Plane"]:
-                        omni.kit.commands.execute(
-                            "CreatePrim",
-                            prim_path=obj_path,
-                            prim_type=obj_type,
-                            attributes={
-                                "size": obj.get("size", 100.0), 
-                                "position": obj_position, 
-                                "rotation": obj_rotation, 
-                                "scale": obj_scale, 
-                                "color": obj_color, 
-                                "physics_enabled": obj_physics,
-                                "mass": obj_mass,
-                                "is_kinematic": obj_kinematic} if obj_type in ["Cube", "Sphere","Plane"] else {},
-                        )
-                        print(f"Created {obj_type} at {obj_path}")
-                    else:
-                        return {"status": "error", "message": f"Invalid object type: {obj_type}"}
-                    
-                    # Set the transform
-                    omni.kit.commands.execute(
-                        "TransformPrimSRT",
-                        path=obj_path,
-                        new_translation=obj_position,
-                        new_rotation_euler=[0, 0, 0],  # We'll set the quaternion separately
-                        new_scale=obj_scale,
-                    )
-                    print(f"Created TransformPrimSRT at {obj_position}")
-                    # Set rotation as quaternion
-                    xform = UsdGeom.Xformable(stage.GetPrimAtPath(obj_path))
-                    if xform and obj_rotation != [1, 0, 0, 0]:
-                        quat = Gf.Quatf(obj_rotation[0], obj_rotation[1], obj_rotation[2], obj_rotation[3])
-                        xform_op = xform.AddRotateOp()
-                        xform_op.Set(quat)
-                    
-                    # Add physics properties if enabled
-                    if obj_physics:
-                        omni.kit.commands.execute(
-                            "CreatePhysics",
-                            prim_path=obj_path,
-                            physics_type="rigid_body" if not obj_kinematic else "kinematic_body",
-                            attributes={
-                                "mass": obj_mass,
-                                "collision_enabled": True,
-                                "kinematic": obj_kinematic
-                            }
-                        )
-                    print(f"Created Physics at {obj_path}")
-                    # Set the color
-                    if obj_color:
-                        material_path = f"{obj_path}/material"
-                        omni.kit.commands.execute(
-                            "CreatePrim",
-                            prim_path=material_path,
-                            prim_type="Material",
-                            attributes={
-                                "diffuseColor": obj_color[:3],
-                                "opacity": obj_color[3] if len(obj_color) > 3 else 1.0
-                            }
-                        )
-                        print(f"Created Material at {material_path}")
-                        # Bind the material to the object
-                        omni.kit.commands.execute(
-                            "BindMaterial",
-                            material_path=material_path,
-                            prim_path=obj_path
-                        )
-
-                        print(f"Bound Material to {obj_path}")
-                        # increment the number of objects created
-                        objects_created += 1
-                return {
-                    "status": "success",
-                    "message": f"Created physics scene with {objects_created} objects",
-                    "result": scene_name
+                shape_types = {
+                    "Cube": UsdGeom.Cube,
+                    "Sphere": UsdGeom.Sphere,
+                    "Cylinder": UsdGeom.Cylinder,
+                    "Cone": UsdGeom.Cone,
+                    "Capsule": UsdGeom.Capsule,
                 }
-                
+                objects_created = 0
+                skipped = []
+                for i, obj in enumerate(objects):
+                    obj_type = obj.get("type", "Cube")
+                    obj_name = obj.get("name", f"object_{i}")
+                    obj_path = obj.get("path", f"/World/{obj_name}")
+                    if obj_type not in shape_types:
+                        return {"status": "error", "message": f"Invalid object type: {obj_type}. Supported: {list(shape_types)}"}
+                    if stage.GetPrimAtPath(obj_path):
+                        print(f"{obj_path} already exists, skip creating")
+                        skipped.append(obj_path)
+                        continue
+
+                    geom = shape_types[obj_type].Define(stage, obj_path)
+                    if obj_type == "Cube" and "size" in obj:
+                        geom.CreateSizeAttr().Set(float(obj["size"]))
+                    if obj_type != "Cube" and "radius" in obj:
+                        geom.CreateRadiusAttr().Set(float(obj["radius"]))
+                    if obj_type in ("Cylinder", "Cone", "Capsule") and "height" in obj:
+                        geom.CreateHeightAttr().Set(float(obj["height"]))
+
+                    xform = UsdGeom.Xformable(geom.GetPrim())
+                    xform.ClearXformOpOrder()
+                    xform.AddTranslateOp().Set(Gf.Vec3d(*obj.get("position", [0, 0, 0])))
+                    rotation = obj.get("rotation", [1, 0, 0, 0])  # quaternion w, x, y, z
+                    xform.AddOrientOp().Set(Gf.Quatf(*[float(v) for v in rotation]))
+                    xform.AddScaleOp().Set(Gf.Vec3f(*obj.get("scale", [1, 1, 1])))
+
+                    color = obj.get("color", [0.5, 0.5, 0.5, 1.0])
+                    if color:
+                        geom.CreateDisplayColorAttr().Set([Gf.Vec3f(*color[:3])])
+                        if len(color) > 3:
+                            geom.CreateDisplayOpacityAttr().Set([float(color[3])])
+
+                    if obj.get("physics_enabled", True):
+                        prim = geom.GetPrim()
+                        UsdPhysics.CollisionAPI.Apply(prim)
+                        rigid_body = UsdPhysics.RigidBodyAPI.Apply(prim)
+                        rigid_body.CreateKinematicEnabledAttr().Set(bool(obj.get("is_kinematic", False)))
+                        UsdPhysics.MassAPI.Apply(prim).CreateMassAttr().Set(float(obj.get("mass", 1.0)))
+                    print(f"Created {obj_type} at {obj_path}")
+                    objects_created += 1
+
+                message = f"Created physics scene with {objects_created} objects"
+                if skipped:
+                    message += f" (skipped existing: {skipped})"
+                return {"status": "success", "message": message, "result": scene_name}
+
             except Exception as e:
                 import traceback
                 return {

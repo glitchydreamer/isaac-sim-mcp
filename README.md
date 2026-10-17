@@ -12,9 +12,9 @@ The MCP Server and its extension leverage the Model Context Protocol (MCP) frame
 
 ## Requirements
 
-- NVIDIA Isaac Sim 4.2.0 or higher
-- Python 3.9+
-- Cursor AI editor for MCP integration
+- NVIDIA Isaac Sim 5.x / 6.0 (uses the `isaacsim.*` extensions; the legacy `omni.isaac.*` modules were removed in 6.0)
+- Python 3.10+ with [uv](https://github.com/astral-sh/uv)
+- An MCP client: Claude Desktop, Cursor, etc.
 
 ## **Mandatory** Pre-requisite
 
@@ -44,8 +44,8 @@ export BEAVER3D_MODEL=<your beaver3d model name>
 export export ARK_API_KEY=<Your Bearver3D API Key>
 export NVIDIA_API_KEY="<your nvidia api key  and apply it from https://ngc.nvidia.com/signout>"
 
-cd ~/.local/share/ov/pkg/isaac-sim-4.2.0
-./isaac-sim.sh --ext-folder /home/ubuntu/Documents/isaac-sim-mcp/ --enable isaac.sim.mcp_extension 
+cd ~/isaacsim   # your Isaac Sim install directory
+./isaac-sim.sh --ext-folder ~/Documents/isaac-sim-mcp --enable isaac.sim.mcp_extension
 ```
 
 Verify the extension starts successfully. The output should look like:
@@ -62,6 +62,29 @@ The extension should be listening at **localhost:8766** by default.
 
 
 ### Install MCP Server
+
+`isaac_mcp/server.py` declares its dependency (`mcp[cli]>=1.6,<2`) inline, so `uv run --script` installs it automatically.
+Note: `mcp` 2.x removed `FastMCP`, so the server is pinned to 1.x.
+
+#### Claude Desktop
+
+Add the server to `~/.config/Claude/claude_desktop_config.json` (Linux) or
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS), using absolute paths, then restart Claude Desktop:
+
+```json
+{
+    "mcpServers": {
+        "isaac-sim": {
+            "command": "/home/<you>/.local/bin/uv",
+            "args": ["run", "--script", "/home/<you>/Documents/isaac-sim-mcp/isaac_mcp/server.py"]
+        }
+    }
+}
+```
+
+Start Isaac Sim with the extension first, then ask Claude to "check the Isaac Sim connection with get_scene_info".
+
+#### Cursor
 
 1. Go to terminal and run, make sure mcp server could start sucessfully at terminal with base venv.
    ```
